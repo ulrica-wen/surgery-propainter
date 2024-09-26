@@ -55,13 +55,13 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
     args = parse_augment()
     pretrain_model_url = 'https://github.com/sczhou/ProPainter/releases/download/v0.1.0/'
     sam_checkpoint_url_dict = {
-        'vit_h': "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth",
+        'vit_h': "../../sam2_hiera_small.pt",
         'vit_l': "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth",
         'vit_b': "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
     }
     checkpoint_fodler = os.path.join('..', '..', 'weights')
 
-    sam_checkpoint = load_file_from_url(sam_checkpoint_url_dict[args.sam_model_type], checkpoint_fodler)
+    sam_checkpoint = sam_checkpoint_url_dict[args.sam_model_type]
     cutie_checkpoint = load_file_from_url(os.path.join(pretrain_model_url, 'cutie-base-mega.pth'), checkpoint_fodler)
     propainter_checkpoint = load_file_from_url(os.path.join(pretrain_model_url, 'ProPainter.pth'), checkpoint_fodler)
     raft_checkpoint = load_file_from_url(os.path.join(pretrain_model_url, 'raft-things.pth'), checkpoint_fodler)
@@ -307,6 +307,17 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
             operation_log = [("Please add at least one mask to track by clicking the image in step2.","Error"), ("","")]
             # return video_output, video_state, interactive_state, operation_error
         masks, logits, painted_images = model.generator(images=following_frames, template_mask=template_mask)
+        mask_save_folder = f'./result/mask/{video_state["video_name"].split(".")[0]}'
+        if not os.path.exists(mask_save_folder):
+            os.makedirs(mask_save_folder)
+
+        print("Saving masks for each frame as PNG")
+        for i, mask in enumerate( masks):
+            mask_filename = os.path.join(mask_save_folder, f'mask_{i:05d}.png')
+            # Convert the mask to an 8-bit image (values between 0 and 255)
+            mask_img = (mask * 255).astype(np.uint8)  # Assuming the mask is binary (0, 1), scale to 0-255
+            cv2.imwrite(mask_filename, mask_img)  # Save as PNG
+            print(f'Saved mask {i} to {mask_filename}')
         # clear GPU memory
         model.cutie.clear_memory()
 
@@ -326,18 +337,22 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
                                                                                                                                             interactive_state["positive_click_times"]+interactive_state["negative_click_times"],
                                                                                                                                             interactive_state["positive_click_times"],
                                                                                                                                             interactive_state["negative_click_times"]))
-
         #### shanggao code for mask save
+        # Save all masks for each frame in a folder
+      # Save all masks for each frame as a PNG image in a folder
         if interactive_state["mask_save"]:
-            if not os.path.exists('./result/mask/{}'.format(video_state["video_name"].split('.')[0])):
-                os.makedirs('./result/mask/{}'.format(video_state["video_name"].split('.')[0]))
-            i = 0
-            print("save mask")
-            for mask in video_state["masks"]:
-                np.save(os.path.join('./result/mask/{}'.format(video_state["video_name"].split('.')[0]), '{:05d}.npy'.format(i)), mask)
-                i+=1
-            # save_mask(video_state["masks"], video_state["video_name"])
-        #### shanggao code for mask save
+            mask_save_folder = f'./result/mask/{video_state["video_name"].split(".")[0]}'
+            if not os.path.exists(mask_save_folder):
+                os.makedirs(mask_save_folder)
+
+            print("Saving masks for each frame as PNG")
+            for i, mask in enumerate(video_state["masks"]):
+                mask_filename = os.path.join(mask_save_folder, f'mask_{i:05d}.png')
+                # Convert the mask to an 8-bit image (values between 0 and 255)
+                mask_img = (mask * 255).astype(np.uint8)  # Assuming the mask is binary (0, 1), scale to 0-255
+                cv2.imwrite(mask_filename, mask_img)  # Save as PNG
+                print(f'Saved mask {i} to {mask_filename}')
+
         return video_output, video_state, interactive_state, operation_log, operation_log
 
     # inpaint 
@@ -426,7 +441,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
         "inference_times": 0,
         "negative_click_times" : 0,
         "positive_click_times": 0,
-        "mask_save": args.mask_save,
+        "mask_save": True,
         "multi_mask": {
             "mask_names": [],
             "masks": []
