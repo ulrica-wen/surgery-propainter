@@ -175,7 +175,7 @@ with gr.Blocks(css=css) as iface:
         video_input = gr.Video(elem_classes="video")
 
         gr.Examples(
-        examples = ['/mnt/datascience1/temp/gradio/pig4.mp4', '/mnt/datascience1/temp/gradio/pig9.mp4'],
+        examples = [os.path.join('/mnt/datascience1/temp/gradio', file) for file in os.listdir('/mnt/datascience1/temp/gradio') if file.endswith('.mp4')],
         inputs=[video_input],
     )
 

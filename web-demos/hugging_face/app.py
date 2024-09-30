@@ -57,7 +57,8 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
     sam_checkpoint_url_dict = {
         'vit_h': "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth",
         'vit_l': "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth",
-        'vit_b': "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
+        'vit_b': "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth",
+        'sam2_vit_l': 'sam2_hiera_large.pt',
     }
     checkpoint_fodler = os.path.join('..', '..', 'weights')
 
@@ -69,7 +70,6 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
 
     # initialize sam, cutie, propainter models
     model = TrackingAnything(sam_checkpoint, cutie_checkpoint, propainter_checkpoint, raft_checkpoint, flow_completion_checkpoint, args)
-
 
     title = r"""<h1 align="center">ProPainter: Improving Propagation and Transformer for Video Inpainting</h1>"""
 
@@ -173,8 +173,12 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
             "fps": fps
             }
         video_info = "Video Name: {},\nFPS: {},\nTotal Frames: {},\nImage Size:{}".format(video_state["video_name"], round(video_state["fps"], 0), len(frames), image_size)
-        model.samcontroler.sam_controler.reset_image() 
-        model.samcontroler.sam_controler.set_image(video_state["origin_images"][0])
+
+        # model.samcontroler.sam_controler.reset_image() 
+        # model.samcontroler.sam_controler.set_image(video_state["origin_images"][0])
+        model.samcontroler.sam_controler.reset_state(model.samcontroler.inference_state)
+        model.samcontroler.sam_controler.init_state(video_path=video_path)
+        
         return video_state, video_info, video_state["origin_images"][0], gr.update(visible=True, maximum=len(frames), value=1), gr.update(visible=True, maximum=len(frames), value=len(frames)), \
                             gr.update(visible=True), gr.update(visible=True), \
                             gr.update(visible=True), gr.update(visible=True),\
@@ -193,8 +197,10 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
 
         # once select a new template frame, set the image in sam
 
-        model.samcontroler.sam_controler.reset_image()
-        model.samcontroler.sam_controler.set_image(video_state["origin_images"][image_selection_slider])
+        # model.samcontroler.sam_controler.reset_image() 
+        # model.samcontroler.sam_controler.set_image(video_state["origin_images"][0])
+        model.samcontroler.sam_controler.reset_state(model.samcontroler.inference_state)
+        model.samcontroler.sam_controler.init_state(video_path=video_path)
 
         operation_log = [("",""), ("Select tracking start frame {}. Try to click the image to add masks for tracking.".format(image_selection_slider),"Normal")]
 
@@ -223,8 +229,11 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
             interactive_state["negative_click_times"] += 1
         
         # prompt for sam model
-        model.samcontroler.sam_controler.reset_image()
-        model.samcontroler.sam_controler.set_image(video_state["origin_images"][video_state["select_frame_number"]])
+        # model.samcontroler.sam_controler.reset_image() 
+        # model.samcontroler.sam_controler.set_image(video_state["origin_images"][0])
+        model.samcontroler.sam_controler.reset_state(model.samcontroler.inference_state)
+        model.samcontroler.sam_controler.init_state(video_path=video_path)
+
         prompt = get_prompt(click_state=click_state, click_input=coordinate)
 
         mask, logit, painted_image = model.first_frame_click( 
@@ -497,6 +506,8 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
         with gr.Row(equal_height=True):
             with gr.Column(scale=2):      
                 video_input = gr.Video(elem_classes="video")
+                print('HERE', type(video_input))
+                # model.samcontroler.sam_controler.init_state(video_path=video_input)
                 extract_frames_button = gr.Button(value="Get video info", interactive=True, variant="primary") 
             with gr.Column(scale=2):
                 run_status = gr.HighlightedText(value=[("",""), ("Try to upload your video and click the Get video info button to get started!", "Normal")],

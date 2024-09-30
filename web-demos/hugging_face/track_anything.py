@@ -2,15 +2,24 @@ import numpy as np
 from tqdm import tqdm
 
 from tools.interact_tools import SamControler
-from tracker.base_tracker import BaseTracker
+from tracker.base_tracker import BaseTracker, ControlerAndTracker
 from inpainter.base_inpainter import ProInpainter
 
 
 class TrackingAnything():
     def __init__(self, sam_checkpoint, cutie_checkpoint, propainter_checkpoint, raft_checkpoint, flow_completion_checkpoint, args):
         self.args = args
-        self.samcontroler = SamControler(sam_checkpoint, args.sam_model_type, args.device)
-        self.cutie = BaseTracker(cutie_checkpoint, device=args.device)
+        ##################
+
+        sam2 = 'sam2' in sam_checkpoint
+
+        if not sam2:
+            self.samcontroler = SamControler(sam_checkpoint, args.sam_model_type, args.device)
+            self.cutie = BaseTracker(cutie_checkpoint, device=args.device)
+
+        else:
+            self.samcontroler = ControlerAndTracker(sam_checkpoint, args.sam_model_type, args.device)
+        ####################
         self.baseinpainter = ProInpainter(propainter_checkpoint, raft_checkpoint, flow_completion_checkpoint, args.device) 
        
     def first_frame_click(self, image: np.ndarray, points:np.ndarray, labels: np.ndarray, multimask=True):

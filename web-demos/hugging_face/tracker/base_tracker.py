@@ -6,12 +6,57 @@ from omegaconf import OmegaConf
 import sys
 sys.path.append('../')
 
+import os
+
 from tracker.config import CONFIG
 from tracker.model.cutie import CUTIE
 from tracker.inference.inference_core import InferenceCore
 from tracker.utils.mask_mapper import MaskMapper
 
 from tools.painter import mask_painter
+
+from sam2.build_sam import build_sam2_video_predictor
+
+sam2_configs = {'sam2_hiera_large.pt': 'sam2_hiera_l.yaml',}        # add config name for new models
+
+
+class ControlerAndTracker:
+    def __init__(self, sam_checkpoint, model_type, device):
+
+        self.device = device
+        self.model_cfg = sam2_configs[os.path.basename(sam_checkpoint)]
+        self.sam_controler = build_sam2_video_predictor(self.model_cfg, sam_checkpoint, device=device)
+    
+    def init_state(self, video_path):
+        self.inference_state = self.sam_controler.init_state(video_path=video_path)
+
+    def first_frame_click(self, image: np.ndarray, points:np.ndarray, labels: np.ndarray, mask_color=3):
+        '''
+        it is used in first frame in video
+        return: mask, logit, painted image(mask+point)
+        '''
+        _, out_obj_ids, out_mask_logits = self.sam_controler.add_new_points_or_box(
+            inference_state=inference_state,
+            frame_idx=ann_frame_idx,
+            obj_id=ann_obj_id,
+            points=points,
+            labels=labels,
+        )
+
+        import code; code.interact(local=locals())
+            
+        
+        assert len(points)==len(labels)
+        
+        painted_image = mask_painter(image, mask.astype('uint8'), mask_color, mask_alpha, contour_color, contour_width)
+        painted_image = point_painter(painted_image, np.squeeze(points[np.argwhere(labels>0)],axis = 1), point_color_ne, point_alpha, point_radius, contour_color, contour_width)
+        painted_image = point_painter(painted_image, np.squeeze(points[np.argwhere(labels<1)],axis = 1), point_color_ps, point_alpha, point_radius, contour_color, contour_width)
+        painted_image = Image.fromarray(painted_image)
+        
+        return mask, logit, painted_image
+
+
+
 
 
 class BaseTracker:

@@ -75,6 +75,9 @@ class SamControler():
             }
             masks, scores, logits = self.sam_controler.predict(prompts, 'point', multimask)
             mask, logit = masks[np.argmax(scores)], logits[np.argmax(scores), :, :]
+        
+
+        import code; code.interact(local=locals())
             
         
         assert len(points)==len(labels)
