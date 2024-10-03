@@ -342,6 +342,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
 
     # inpaint 
     def inpaint_video(video_state, resize_ratio_number, dilate_radius_number, raft_iter_number, subvideo_length_number, neighbor_length_number, ref_stride_number, mask_dropdown):
+
         operation_log = [("",""), ("Inpainting finished!","Normal")]
 
         frames = np.asarray(video_state["origin_images"])
@@ -360,6 +361,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as iface:
                 continue
             inpaint_masks[inpaint_masks==i] = 0
         
+        import code; code.interact(local=locals())
         # inpaint for videos
         inpainted_frames = model.baseinpainter.inpaint(frames, 
                                                     inpaint_masks, 
