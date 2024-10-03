@@ -51,6 +51,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as demo:
 
     clicks_state = gr.State([[],[]])
     jpeg_dir = gr.State('')
+    masking_model_inference_state = gr.State(None)
     buffer_masked_video, buffer_inpainted_video = gr.State(None), gr.State(None)            # Needed for some reason - otherwise bug when displaying videos at the end of pipeline
     masking_model = build_sam2_video_predictor(model_cfg, sam2_checkpoint, device=device)
     inpainting_model = ProInpainter(propainter_checkpoint, raft_checkpoint, flow_completion_checkpoint, device) 
@@ -62,11 +63,11 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as demo:
             shutil.rmtree('./result/masked_video/')
         if os.path.exists('./result/inpainted_video/'):  
             shutil.rmtree('./result/inpainted_video/')
-        return None, None, None, None, '', [[],[]], None, None, ''
+        return None, None, None, None, '', [[],[]], None, None, None, ''
 
 
     def clear_video():
-        return None, None, None, None, '', [[],[]], None, None, ''
+        return None, None, None, None, '', [[],[]], None, None, None, ''
         
     def get_first_frame(video_path):
         cap = cv2.VideoCapture(video_path)
@@ -75,17 +76,58 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as demo:
             return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         return None
 
+    def initialize_masking_model(jpeg_dir):
+        masking_model_inference_state = masking_model.init_state(video_path=jpeg_dir)
+        return masking_model_inference_state
+
     def select_button_actions_wrapper(video_path):
         frame = get_first_frame(video_path)
         jpeg_dir = mp4_to_jpeg(video_path)
-        return frame, jpeg_dir
+        masking_model_inference_state = initialize_masking_model(jpeg_dir) 
+        return frame, jpeg_dir, masking_model_inference_state
 
-    def handle_image_click(image, clicks_state, clicks_nature, evt: gr.SelectData):
+    def handle_image_click(video_input, clicks_state, clicks_nature, masking_model_inference_state, evt: gr.SelectData):
+        #saving click coordinates and nature in the gr.state
         clicks = evt.index if evt.index else []
         if clicks != None:
             clicks_state[0].append(clicks)
             clicks_state[1].extend([1 if clicks_nature == 'Positive' else 0])
+        
+        # masking first frame according to points selected so far (and initialize future video masking)
+        frame_idx = 0       # for now only supports frame 0
+        obj_id = 1          # for now only supports 1 mask
+
+        points = np.array(clicks_state[0], dtype=np.float32)
+        labels = np.array(clicks_state[1], np.int32)
+
+        with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+            _, _, mask_logits = masking_model.add_new_points_or_box(inference_state=masking_model_inference_state,
+                                                            frame_idx=frame_idx,
+                                                            obj_id=obj_id,
+                                                            points=points,
+                                                            labels=labels,
+                                                            )
+        
+        mask_logits = mask_logits[0]        # for now only supports 1 mask
+        mask_logits = mask_logits.cpu().numpy().transpose(1,2,0)
+
+        mask = mask_logits > 0.
+        mask = np.repeat(mask, 4, axis=2)
+
+        pixels_to_impact = (mask[:,:,:3] != [0,0,0]).all(axis=2)
+
+        mask = np.uint8(mask * np.array(GREEN_COLOR + (0,)))
+        mask[:, :, 3][pixels_to_impact] = 128
+
+        mask = Image.fromarray(mask).convert('RGBA')
+        image = Image.fromarray(get_first_frame(video_input)).convert('RGBA')
+
+        image = Image.alpha_composite(image, mask).convert('RGB')
+        # image = np.array(image.convert('RGB'))
+
+        # also draw the points
         image = draw_points(image, clicks_state)
+
         return image, clicks_state
 
     def clear_clicks(video_input):
@@ -98,11 +140,11 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as demo:
         image = np.array(image.copy())
         for point, label in zip(*clicks_state):
             if label == 1:
+                cv2.circle(image, tuple(point), radius=8, color=(255, 255, 255), thickness=2) #contour
                 cv2.circle(image, tuple(point), radius=7, color=GREEN_COLOR, thickness=-1)
-                cv2.circle(image, tuple(point), radius=8, color=(255, 255, 255), thickness=1) #contour
             else:
+                cv2.circle(image, tuple(point), radius=8, color=(255, 255, 255), thickness=2) #contour
                 cv2.circle(image, tuple(point), radius=7, color=(0,0,0), thickness=-1)
-                cv2.circle(image, tuple(point), radius=8, color=(255, 255, 255), thickness=1) #contour
         return image
 
     def mp4_to_jpeg(video_input):
@@ -124,7 +166,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as demo:
 
         return jpeg_dir  
 
-    def mask_video(clicks_state, jpeg_dir):
+    def mask_video(clicks_state, jpeg_dir, masking_model_inference_state):
         ann_frame_idx = 0       # for now only supports frame 0
         ann_obj_id = 1          # for now only supports 1 mask
 
@@ -132,10 +174,8 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as demo:
         labels = np.array(clicks_state[1], np.int32)
 
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-            
-            inference_state = masking_model.init_state(video_path=jpeg_dir)
 
-            masking_model.add_new_points_or_box(inference_state=inference_state,
+            masking_model.add_new_points_or_box(inference_state=masking_model_inference_state,
                                                 frame_idx=ann_frame_idx,
                                                 obj_id=ann_obj_id,
                                                 points=points,
@@ -143,14 +183,15 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as demo:
                                             )
 
             video_segments = {}
-            for out_frame_idx, out_obj_ids, out_mask_logits in masking_model.propagate_in_video(inference_state):
+            for out_frame_idx, out_obj_ids, out_mask_logits in masking_model.propagate_in_video(masking_model_inference_state):
                 video_segments[out_frame_idx] = {
                                                     out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy() for i, out_obj_id in enumerate(out_obj_ids)
                                                 }
 
-            masking_model.reset_state(inference_state)
+            masking_model.reset_state(masking_model_inference_state)
 
-        return video_segments
+        return video_segments, masking_model_inference_state
+    
 
     def masked_frames_to_video(video_segments, video_input, jpeg_dir):
         masked_video_dir = './result/masked_video/'
@@ -229,13 +270,13 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as demo:
         return video_path
 
     
-    def run_masking_inpainting(video_input, clicks_state, jpeg_dir):
+    def run_masking_inpainting(video_input, clicks_state, jpeg_dir, masking_model_inference_state):
         gr.Info('Inpainting the video...')
-        video_segments = mask_video(clicks_state, jpeg_dir)
+        video_segments, masking_model_inference_state = mask_video(clicks_state, jpeg_dir, masking_model_inference_state)
         masked_video = masked_frames_to_video(video_segments, video_input, jpeg_dir)
         inpainted_frames = inpaint_video(jpeg_dir, video_segments)
         inpainted_video = inpainted_frames_to_video(inpainted_frames, video_segments, video_input)
-        return masked_video, inpainted_video, "Inpainting Complete."
+        return masked_video, inpainted_video, masking_model_inference_state, "Inpainting Complete."
 
     def display_videos(masked_video, inpainted_video):
         return masked_video, inpainted_video
@@ -282,15 +323,15 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=css) as demo:
             display_button = gr.Button("Display", elem_classes="add_button", scale=1)
 
 
-    remove_button.click(clear_video, outputs=[video_input, masked_video, inpainted_video, frame, jpeg_dir, clicks_state, buffer_masked_video, buffer_inpainted_video, info_box])
-    clear_button.click(clear_all, outputs=[video_input, masked_video, inpainted_video, frame, jpeg_dir, clicks_state, buffer_masked_video, buffer_inpainted_video, info_box])
-    select_button.click(select_button_actions_wrapper, inputs=video_input, outputs=[frame, jpeg_dir])
+    remove_button.click(clear_video, outputs=[video_input, masked_video, inpainted_video, frame, jpeg_dir, clicks_state, masking_model_inference_state, buffer_masked_video, buffer_inpainted_video, info_box])
+    clear_button.click(clear_all, outputs=[video_input, masked_video, inpainted_video, frame, jpeg_dir, clicks_state, masking_model_inference_state, buffer_masked_video, buffer_inpainted_video, info_box])
+    select_button.click(select_button_actions_wrapper, inputs=video_input, outputs=[frame, jpeg_dir, masking_model_inference_state])
 
     clear_clicks_button.click(clear_clicks, inputs=video_input, outputs=[frame, clicks_state, info_box])
 
-    frame.select(handle_image_click, inputs=[frame, clicks_state, clicks_nature], outputs=[frame, clicks_state])
+    frame.select(handle_image_click, inputs=[video_input, clicks_state, clicks_nature, masking_model_inference_state], outputs=[frame, clicks_state])
 
-    validation_button_points.click(run_masking_inpainting, inputs=[video_input, clicks_state, jpeg_dir], outputs=[buffer_masked_video, buffer_inpainted_video, info_box])
+    validation_button_points.click(run_masking_inpainting, inputs=[video_input, clicks_state, jpeg_dir, masking_model_inference_state], outputs=[buffer_masked_video, buffer_inpainted_video, masking_model_inference_state, info_box])
     display_button.click(display_videos, inputs=[buffer_masked_video, buffer_inpainted_video], outputs=[masked_video, inpainted_video])
     
 
